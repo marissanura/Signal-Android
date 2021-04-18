@@ -177,4 +177,5 @@
 
     <dimen name="payment_recovery_phrase_adapter_margin">49dp</dimen>
     <dimen name="payment_recovery_phrase_outline_margin">32dp</dimen>
+    <dimen name="fab_margin">16dp</dimen>
 </resources>

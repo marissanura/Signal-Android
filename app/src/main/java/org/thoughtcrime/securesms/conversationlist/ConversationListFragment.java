@@ -53,15 +53,15 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.view.ActionMode;
 import androidx.appcompat.widget.Toolbar;
 import androidx.appcompat.widget.TooltipCompat;
-import androidx.constraintlayout.widget.ConstraintLayout;
-import androidx.constraintlayout.widget.ConstraintSet;
 import androidx.core.content.res.ResourcesCompat;
 import androidx.fragment.app.DialogFragment;
+import androidx.lifecycle.DefaultLifecycleObserver;
+import androidx.lifecycle.LifecycleOwner;
+import androidx.lifecycle.ProcessLifecycleOwner;
 import androidx.lifecycle.ViewModelProviders;
 import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
-import androidx.transition.TransitionManager;
 
 import com.annimon.stream.Stream;
 import com.google.android.material.snackbar.Snackbar;
@@ -75,10 +75,11 @@ import org.thoughtcrime.securesms.ApplicationPreferencesActivity;
 import org.thoughtcrime.securesms.MainFragment;
 import org.thoughtcrime.securesms.MainNavigator;
 import org.thoughtcrime.securesms.NewConversationActivity;
+import org.thoughtcrime.securesms.GroupConversationActivity;
+import org.thoughtcrime.securesms.PersonalConversationActivity;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.components.RatingManager;
 import org.thoughtcrime.securesms.components.SearchToolbar;
-import org.thoughtcrime.securesms.components.UnreadPaymentsView;
 import org.thoughtcrime.securesms.components.recyclerview.DeleteItemAnimator;
 import org.thoughtcrime.securesms.components.registration.PulsingFloatingActionButton;
 import org.thoughtcrime.securesms.components.reminder.DozeReminder;
@@ -93,7 +94,6 @@ import org.thoughtcrime.securesms.conversation.ConversationFragment;
 import org.thoughtcrime.securesms.conversationlist.model.Conversation;
 import org.thoughtcrime.securesms.conversationlist.model.MessageResult;
 import org.thoughtcrime.securesms.conversationlist.model.SearchResult;
-import org.thoughtcrime.securesms.conversationlist.model.UnreadPayments;
 import org.thoughtcrime.securesms.database.DatabaseFactory;
 import org.thoughtcrime.securesms.database.MessageDatabase.MarkedMessageInfo;
 import org.thoughtcrime.securesms.database.ThreadDatabase;
@@ -112,9 +112,6 @@ import org.thoughtcrime.securesms.megaphone.Megaphones;
 import org.thoughtcrime.securesms.mms.GlideApp;
 import org.thoughtcrime.securesms.net.PipeConnectivityListener;
 import org.thoughtcrime.securesms.notifications.MarkReadReceiver;
-import org.thoughtcrime.securesms.payments.preferences.PaymentsActivity;
-import org.thoughtcrime.securesms.payments.preferences.details.PaymentDetailsFragmentArgs;
-import org.thoughtcrime.securesms.payments.preferences.details.PaymentDetailsParcelable;
 import org.thoughtcrime.securesms.permissions.Permissions;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.service.KeyCachingService;
@@ -144,16 +141,15 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
-import java.util.UUID;
 
 import static android.app.Activity.RESULT_OK;
 
 
 public class ConversationListFragment extends MainFragment implements ActionMode.Callback,
-                                                                      ConversationListAdapter.OnConversationClickListener,
-                                                                      ConversationListSearchAdapter.EventListener,
-                                                                      MainNavigator.BackHandler,
-                                                                      MegaphoneActionController
+        ConversationListAdapter.OnConversationClickListener,
+        ConversationListSearchAdapter.EventListener,
+        MainNavigator.BackHandler,
+        MegaphoneActionController
 {
   public static final short MESSAGE_REQUESTS_REQUEST_CODE_CREATE_NAME = 32562;
   public static final short SMS_ROLE_REQUEST_CODE                     = 32563;
@@ -163,19 +159,18 @@ public class ConversationListFragment extends MainFragment implements ActionMode
   private static final int MAXIMUM_PINNED_CONVERSATIONS = 4;
 
   private ActionMode                        actionMode;
-  private ConstraintLayout                  constraintLayout;
   private RecyclerView                      list;
   private Stub<ReminderView>                reminderView;
-  private Stub<UnreadPaymentsView>          paymentNotificationView;
   private Stub<ViewGroup>                   emptyState;
   private TextView                          searchEmptyState;
   private PulsingFloatingActionButton       fab;
   private PulsingFloatingActionButton       cameraFab;
+  private PulsingFloatingActionButton       groupChat;
+  private PulsingFloatingActionButton       personalChat;
   private Stub<SearchToolbar>               searchToolbar;
   private ImageView                         proxyStatus;
   private ImageView                         searchAction;
   private View                              toolbarShadow;
-  private View                              unreadPaymentsDot;
   private ConversationListViewModel         viewModel;
   private RecyclerView.Adapter              activeAdapter;
   private ConversationListAdapter           defaultAdapter;
@@ -206,20 +201,19 @@ public class ConversationListFragment extends MainFragment implements ActionMode
 
   @Override
   public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
-    constraintLayout        = view.findViewById(R.id.constraint_layout);
-    list                    = view.findViewById(R.id.list);
-    fab                     = view.findViewById(R.id.fab);
-    cameraFab               = view.findViewById(R.id.camera_fab);
-    searchEmptyState        = view.findViewById(R.id.search_no_results);
-    searchAction            = view.findViewById(R.id.search_action);
-    toolbarShadow           = view.findViewById(R.id.conversation_list_toolbar_shadow);
-    proxyStatus             = view.findViewById(R.id.conversation_list_proxy_status);
-    unreadPaymentsDot       = view.findViewById(R.id.unread_payments_indicator);
-    reminderView            = new Stub<>(view.findViewById(R.id.reminder));
-    emptyState              = new Stub<>(view.findViewById(R.id.empty_state));
-    searchToolbar           = new Stub<>(view.findViewById(R.id.search_toolbar));
-    megaphoneContainer      = new Stub<>(view.findViewById(R.id.megaphone_container));
-    paymentNotificationView = new Stub<>(view.findViewById(R.id.payments_notification));
+    list               = view.findViewById(R.id.list);
+    fab                = view.findViewById(R.id.fab);
+    cameraFab          = view.findViewById(R.id.camera_fab);
+    groupChat          = view.findViewById(R.id.group_chat);
+    personalChat       = view.findViewById(R.id.personal_chat);
+    searchEmptyState   = view.findViewById(R.id.search_no_results);
+    searchAction       = view.findViewById(R.id.search_action);
+    toolbarShadow      = view.findViewById(R.id.conversation_list_toolbar_shadow);
+    proxyStatus        = view.findViewById(R.id.conversation_list_proxy_status);
+    reminderView       = new Stub<>(view.findViewById(R.id.reminder));
+    emptyState         = new Stub<>(view.findViewById(R.id.empty_state));
+    searchToolbar      = new Stub<>(view.findViewById(R.id.search_toolbar));
+    megaphoneContainer = new Stub<>(view.findViewById(R.id.megaphone_container));
 
     Toolbar toolbar = getToolbar(view);
     toolbar.setVisibility(View.VISIBLE);
@@ -229,6 +223,8 @@ public class ConversationListFragment extends MainFragment implements ActionMode
 
     fab.show();
     cameraFab.show();
+    groupChat.show();
+    personalChat.show();
 
     list.setLayoutManager(new LinearLayoutManager(requireActivity()));
     list.setItemAnimator(new DeleteItemAnimator());
@@ -241,14 +237,16 @@ public class ConversationListFragment extends MainFragment implements ActionMode
     fab.setOnClickListener(v -> startActivity(new Intent(getActivity(), NewConversationActivity.class)));
     cameraFab.setOnClickListener(v -> {
       Permissions.with(requireActivity())
-                 .request(Manifest.permission.CAMERA)
-                 .ifNecessary()
-                 .withRationaleDialog(getString(R.string.ConversationActivity_to_capture_photos_and_video_allow_signal_access_to_the_camera), R.drawable.ic_camera_24)
-                 .withPermanentDenialDialog(getString(R.string.ConversationActivity_signal_needs_the_camera_permission_to_take_photos_or_video))
-                 .onAllGranted(() -> startActivity(MediaSendActivity.buildCameraFirstIntent(requireActivity())))
-                 .onAnyDenied(() -> Toast.makeText(requireContext(), R.string.ConversationActivity_signal_needs_camera_permissions_to_take_photos_or_video, Toast.LENGTH_LONG).show())
-                 .execute();
+              .request(Manifest.permission.CAMERA)
+              .ifNecessary()
+              .withRationaleDialog(getString(R.string.ConversationActivity_to_capture_photos_and_video_allow_signal_access_to_the_camera), R.drawable.ic_camera_24)
+              .withPermanentDenialDialog(getString(R.string.ConversationActivity_signal_needs_the_camera_permission_to_take_photos_or_video))
+              .onAllGranted(() -> startActivity(MediaSendActivity.buildCameraFirstIntent(requireActivity())))
+              .onAnyDenied(() -> Toast.makeText(requireContext(), R.string.ConversationActivity_signal_needs_camera_permissions_to_take_photos_or_video, Toast.LENGTH_LONG).show())
+              .execute();
     });
+    groupChat.setOnClickListener(v -> startActivity(new Intent(getActivity(), GroupConversationActivity.class)));
+    personalChat.setOnClickListener(v -> startActivity(new Intent(getActivity(), PersonalConversationActivity.class)));
 
     initializeViewModel();
     initializeListAdapters();
@@ -298,6 +296,8 @@ public class ConversationListFragment extends MainFragment implements ActionMode
 
     fab.stopPulse();
     cameraFab.stopPulse();
+    groupChat.stopPulse();
+    personalChat.stopPulse();
     EventBus.getDefault().unregister(this);
   }
 
@@ -367,9 +367,9 @@ public class ConversationListFragment extends MainFragment implements ActionMode
   public void onConversationClicked(@NonNull ThreadRecord threadRecord) {
     hideKeyboard();
     getNavigator().goToConversation(threadRecord.getRecipient().getId(),
-                                    threadRecord.getThreadId(),
-                                    threadRecord.getDistributionType(),
-                                    -1);
+            threadRecord.getThreadId(),
+            threadRecord.getDistributionType(),
+            -1);
   }
 
   @Override
@@ -384,9 +384,9 @@ public class ConversationListFragment extends MainFragment implements ActionMode
     }, threadId -> {
       hideKeyboard();
       getNavigator().goToConversation(contact.getId(),
-                                      threadId,
-                                      ThreadDatabase.DistributionTypes.DEFAULT,
-                                      -1);
+              threadId,
+              ThreadDatabase.DistributionTypes.DEFAULT,
+              -1);
     });
   }
 
@@ -398,9 +398,9 @@ public class ConversationListFragment extends MainFragment implements ActionMode
     }, startingPosition -> {
       hideKeyboard();
       getNavigator().goToConversation(message.conversationRecipient.getId(),
-                                      message.threadId,
-                                      ThreadDatabase.DistributionTypes.DEFAULT,
-                                      startingPosition);
+              message.threadId,
+              ThreadDatabase.DistributionTypes.DEFAULT,
+              startingPosition);
     });
   }
 
@@ -467,7 +467,7 @@ public class ConversationListFragment extends MainFragment implements ActionMode
   private void initializeSearchListener() {
     searchAction.setOnClickListener(v -> {
       searchToolbar.get().display(searchAction.getX() + (searchAction.getWidth() / 2.0f),
-                                  searchAction.getY() + (searchAction.getHeight() / 2.0f));
+              searchAction.getY() + (searchAction.getHeight() / 2.0f));
 
       searchToolbar.get().setListener(new SearchToolbar.SearchListener() {
         @Override
@@ -575,43 +575,6 @@ public class ConversationListFragment extends MainFragment implements ActionMode
       @Override
       public void onBackground() { }
     };
-
-    viewModel.getUnreadPaymentsLiveData().observe(getViewLifecycleOwner(), this::onUnreadPaymentsChanged);
-  }
-
-  private void onUnreadPaymentsChanged(@NonNull Optional<UnreadPayments> unreadPayments) {
-    if (unreadPayments.isPresent()) {
-      paymentNotificationView.get().setListener(new PaymentNotificationListener(unreadPayments.get()));
-      paymentNotificationView.get().setUnreadPayments(unreadPayments.get());
-      animatePaymentUnreadStatusIn();
-    } else {
-      animatePaymentUnreadStatusOut();
-    }
-  }
-
-  private void animatePaymentUnreadStatusIn() {
-    animatePaymentUnreadStatus(ConstraintSet.VISIBLE);
-    unreadPaymentsDot.animate().alpha(1);
-  }
-
-  private void animatePaymentUnreadStatusOut() {
-    if (paymentNotificationView.resolved()) {
-      animatePaymentUnreadStatus(ConstraintSet.GONE);
-    }
-
-    unreadPaymentsDot.animate().alpha(0);
-  }
-
-  private void animatePaymentUnreadStatus(int constraintSetVisibility) {
-    paymentNotificationView.get();
-
-    TransitionManager.beginDelayedTransition(constraintLayout);
-
-    ConstraintSet currentLayout = new ConstraintSet();
-    currentLayout.clone(constraintLayout);
-
-    currentLayout.setVisibility(R.id.payments_notification, constraintSetVisibility);
-    currentLayout.applyTo(constraintLayout);
   }
 
   private void onSearchResultChanged(@Nullable SearchResult result) {
@@ -760,11 +723,11 @@ public class ConversationListFragment extends MainFragment implements ActionMode
     String    snackBarTitle         = getResources().getQuantityString(getArchivedSnackbarTitleRes(), count, count);
 
     new SnackbarAsyncTask<Void>(getViewLifecycleOwner().getLifecycle(),
-                                requireView(),
-                                snackBarTitle,
-                                getString(R.string.ConversationListFragment_undo),
-                                getResources().getColor(R.color.amber_500),
-                                Snackbar.LENGTH_LONG, true)
+            requireView(),
+            snackBarTitle,
+            getString(R.string.ConversationListFragment_undo),
+            getResources().getColor(R.color.amber_500),
+            Snackbar.LENGTH_LONG, true)
     {
 
       @Override
@@ -795,9 +758,9 @@ public class ConversationListFragment extends MainFragment implements ActionMode
     AlertDialog.Builder alert              = new AlertDialog.Builder(getActivity());
     alert.setIcon(R.drawable.ic_warning);
     alert.setTitle(getActivity().getResources().getQuantityString(R.plurals.ConversationListFragment_delete_selected_conversations,
-                                                                  conversationsCount, conversationsCount));
+            conversationsCount, conversationsCount));
     alert.setMessage(getActivity().getResources().getQuantityString(R.plurals.ConversationListFragment_this_will_permanently_delete_all_n_selected_conversations,
-                                                                    conversationsCount, conversationsCount));
+            conversationsCount, conversationsCount));
     alert.setCancelable(true);
 
     alert.setPositiveButton(R.string.delete, (dialog, which) -> {
@@ -810,9 +773,9 @@ public class ConversationListFragment extends MainFragment implements ActionMode
           @Override
           protected void onPreExecute() {
             dialog = ProgressDialog.show(getActivity(),
-                                         getActivity().getString(R.string.ConversationListFragment_deleting),
-                                         getActivity().getString(R.string.ConversationListFragment_deleting_selected_conversations),
-                                         true, false);
+                    getActivity().getString(R.string.ConversationListFragment_deleting),
+                    getActivity().getString(R.string.ConversationListFragment_deleting_selected_conversations),
+                    true, false);
           }
 
           @Override
@@ -840,14 +803,14 @@ public class ConversationListFragment extends MainFragment implements ActionMode
 
   private void handlePinAllSelected() {
     final Set<Long> toPin = new LinkedHashSet<>(Stream.of(defaultAdapter.getBatchSelection())
-                                                      .filterNot(conversation -> conversation.getThreadRecord().isPinned())
-                                                      .map(conversation -> conversation.getThreadRecord().getThreadId())
-                                                      .toList());
+            .filterNot(conversation -> conversation.getThreadRecord().isPinned())
+            .map(conversation -> conversation.getThreadRecord().getThreadId())
+            .toList());
 
     if (toPin.size() + viewModel.getPinnedCount() > MAXIMUM_PINNED_CONVERSATIONS) {
       Snackbar.make(fab,
-                    getString(R.string.conversation_list__you_can_only_pin_up_to_d_chats, MAXIMUM_PINNED_CONVERSATIONS),
-                    Snackbar.LENGTH_LONG)
+              getString(R.string.conversation_list__you_can_only_pin_up_to_d_chats, MAXIMUM_PINNED_CONVERSATIONS),
+              Snackbar.LENGTH_LONG)
               .setTextColor(Color.WHITE)
               .show();
       actionMode.finish();
@@ -1034,7 +997,7 @@ public class ConversationListFragment extends MainFragment implements ActionMode
       TypedArray lightStatusBarAttr = getActivity().getTheme().obtainStyledAttributes(new int[] {android.R.attr.windowLightStatusBar});
       int        current            = getActivity().getWindow().getDecorView().getSystemUiVisibility();
       int        statusBarMode      = lightStatusBarAttr.getBoolean(0, false) ? current | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-                                                                              : current & ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+              : current & ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
 
       getActivity().getWindow().getDecorView().setSystemUiVisibility(statusBarMode);
 
@@ -1109,12 +1072,12 @@ public class ConversationListFragment extends MainFragment implements ActionMode
   @SuppressLint("StaticFieldLeak")
   protected void onItemSwiped(long threadId, int unreadCount) {
     new SnackbarAsyncTask<Long>(getViewLifecycleOwner().getLifecycle(),
-                                requireView(),
-                                getResources().getQuantityString(R.plurals.ConversationListFragment_conversations_archived, 1, 1),
-                                getString(R.string.ConversationListFragment_undo),
-                                getResources().getColor(R.color.amber_500),
-                                Snackbar.LENGTH_LONG,
-                                false)
+            requireView(),
+            getResources().getQuantityString(R.plurals.ConversationListFragment_conversations_archived, 1, 1),
+            getString(R.string.ConversationListFragment_undo),
+            getResources().getColor(R.color.amber_500),
+            Snackbar.LENGTH_LONG,
+            false)
     {
       private final ThreadDatabase threadDatabase= DatabaseFactory.getThreadDatabase(getActivity());
 
@@ -1149,44 +1112,6 @@ public class ConversationListFragment extends MainFragment implements ActionMode
     }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, threadId);
   }
 
-  private class PaymentNotificationListener implements UnreadPaymentsView.Listener {
-
-    private final UnreadPayments unreadPayments;
-
-    private PaymentNotificationListener(@NonNull UnreadPayments unreadPayments) {
-      this.unreadPayments = unreadPayments;
-    }
-
-    @Override
-    public void onOpenPaymentsNotificationClicked() {
-      UUID paymentId = unreadPayments.getPaymentUuid();
-
-      if (paymentId == null) {
-        goToPaymentsHome();
-      } else {
-        goToSinglePayment(paymentId);
-      }
-    }
-
-    @Override
-    public void onClosePaymentsNotificationClicked() {
-      viewModel.onUnreadPaymentsClosed();
-    }
-
-    private void goToPaymentsHome() {
-      startActivity(new Intent(requireContext(), PaymentsActivity.class));
-    }
-
-    private void goToSinglePayment(@NonNull UUID paymentId) {
-      Intent intent = new Intent(requireContext(), PaymentsActivity.class);
-
-      intent.putExtra(PaymentsActivity.EXTRA_PAYMENTS_STARTING_ACTION, R.id.action_directly_to_paymentDetails);
-      intent.putExtra(PaymentsActivity.EXTRA_STARTING_ARGUMENTS, new PaymentDetailsFragmentArgs.Builder(PaymentDetailsParcelable.forUuid(paymentId)).build().toBundle());
-
-      startActivity(intent);
-    }
-  }
-
   private class ArchiveListenerCallback extends ItemTouchHelper.SimpleCallback {
 
     ArchiveListenerCallback() {
@@ -1204,9 +1129,9 @@ public class ConversationListFragment extends MainFragment implements ActionMode
     @Override
     public int getSwipeDirs(@NonNull RecyclerView recyclerView, @NonNull RecyclerView.ViewHolder viewHolder) {
       if (viewHolder.itemView instanceof ConversationListItemAction      ||
-          viewHolder instanceof ConversationListAdapter.HeaderViewHolder ||
-          actionMode != null                                             ||
-          activeAdapter == searchAdapter)
+              viewHolder instanceof ConversationListAdapter.HeaderViewHolder ||
+              actionMode != null                                             ||
+              activeAdapter == searchAdapter)
       {
         return 0;
       }
@@ -1249,7 +1174,7 @@ public class ConversationListFragment extends MainFragment implements ActionMode
           canvas.drawColor(alpha > 0 ? resources.getColor(R.color.green_500) : Color.WHITE);
 
           canvas.translate(itemView.getLeft() + resources.getDimension(R.dimen.conversation_list_fragment_archive_padding),
-                           itemView.getTop() + (itemView.getBottom() - itemView.getTop() - archiveDrawable.getIntrinsicHeight()) / 2f);
+                  itemView.getTop() + (itemView.getBottom() - itemView.getTop() - archiveDrawable.getIntrinsicHeight()) / 2f);
 
           archiveDrawable.draw(canvas);
           canvas.restore();
